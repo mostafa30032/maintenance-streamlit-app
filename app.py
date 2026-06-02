@@ -2,9 +2,9 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, timedelta
 
-st.set_page_config(page_title="نظام إدارة الصيانة والمركبات", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="نظام إدارة أسطول المركبات", layout="wide", initial_sidebar_state="expanded")
 
 # إضافة CSS مخصص
 st.markdown("""
@@ -16,32 +16,33 @@ st.markdown("""
             font-weight: bold;
             margin-bottom: 20px;
         }
-        .metric-card {
-            padding: 20px;
-            border-radius: 10px;
-            background-color: #f0f2f6;
-        }
-        .stat-box {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 20px;
-            border-radius: 10px;
+        .warning-box {
+            background-color: #ff6b6b;
             color: white;
-            text-align: center;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 10px 0;
+        }
+        .info-box {
+            background-color: #4ecdc4;
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
             margin: 10px 0;
         }
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h1 class='header-title'>🚗 لوحة تحكم إدارة الصيانة والمركبات</h1>", unsafe_allow_html=True)
+st.markdown("<h1 class='header-title'>🚗 نظام إدارة أسطول المركبات</h1>", unsafe_allow_html=True)
 st.markdown("---")
 
 # الشريط الجانبي
 with st.sidebar:
     st.header("⚙️ إعدادات النظام")
-    st.write("قم برفع ملف بيانات الصيانة")
+    st.write("قم برفع ملف بيانات المركبات")
 
 # رفع ملف Excel
-uploaded_file = st.file_uploader("📤 رفع ملف البيانات (Excel)", type=['xlsx', 'xls'])
+uploaded_file = st.file_uploader("📤 رفع ملف بيانات المركبات (Excel)", type=['xlsx', 'xls'])
 
 if uploaded_file is not None:
     try:
@@ -53,360 +54,324 @@ if uploaded_file is not None:
         
         st.success("✅ تم تحميل البيانات بنجاح!")
         
+        # تحويل تاريخ انتهاء الرخصة لـ datetime
+        if 'Licence Expiry Date' in df.columns:
+            df['Licence Expiry Date'] = pd.to_datetime(df['Licence Expiry Date'], errors='coerce')
+        
+        # حساب الأيام المتبقية
+        today = datetime.now()
+        if 'Licence Expiry Date' in df.columns:
+            df['Days Remaining'] = (df['Licence Expiry Date'] - pd.Timestamp(today)).dt.days
+        
         # ============ KPI الرئيسية ============
         st.subheader("📊 المؤشرات الرئيسية")
         
         col1, col2, col3, col4, col5 = st.columns(5)
         
-        # تحديد عمود المبلغ الصافي
-        amount_col = 'Net Amount' if 'Net Amount' in df.columns else 'Amount'
-        
         with col1:
-            st.metric("📋 إجمالي الصيانات", len(df))
+            st.metric("🚗 إجمالي المركبات", len(df))
+        
         with col2:
-            st.metric("💰 إجمالي المبلغ الصافي", f"{df[amount_col].sum():,.2f}")
+            active_vehicles = len(df[df['STATUES-状态'] == 'Active']) if 'STATUES-状态' in df.columns else 0
+            st.metric("✅ المركبات النشطة", active_vehicles)
+        
         with col3:
-            st.metric("🚗 عدد المعدات", df['Vehicle Plate Number'].nunique() if 'Vehicle Plate Number' in df.columns else 0)
+            expired = len(df[df['Days Remaining'] <= 0]) if 'Days Remaining' in df.columns else 0
+            st.metric("⚠️ رخص منتهية", expired)
+        
         with col4:
-            st.metric("📍 المناطق", df['Area'].nunique() if 'Area' in df.columns else 0)
+            expiring_soon = len(df[(df['Days Remaining'] > 0) & (df['Days Remaining'] <= 30)]) if 'Days Remaining' in df.columns else 0
+            st.metric("⏰ انتهاء قريب", expiring_soon)
+        
         with col5:
-            st.metric("🔧 أنواع الصيانات", df['Notes ar'].nunique() if 'Notes ar' in df.columns else 0)
+            areas_count = df['Area'].nunique() if 'Area' in df.columns else 0
+            st.metric("📍 المناطق", areas_count)
+        
+        st.markdown("---")
+        
+        # ============ التنبيهات ============
+        if 'Days Remaining' in df.columns:
+            expired_vehicles = df[df['Days Remaining'] <= 0]
+            if len(expired_vehicles) > 0:
+                st.markdown("<div class='warning-box'>⚠️ تحذير: يوجد رخص منتهية!</div>", unsafe_allow_html=True)
+                st.dataframe(expired_vehicles[['Vehicle ID', 'Vehicle Type', 'Area', 'Licence Expiry Date']], use_container_width=True)
+            
+            expiring_soon_vehicles = df[(df['Days Remaining'] > 0) & (df['Days Remaining'] <= 30)]
+            if len(expiring_soon_vehicles) > 0:
+                st.markdown("<div class='info-box'>⏰ معلومة: رخص تنتهي خلال 30 يوم</div>", unsafe_allow_html=True)
+                st.dataframe(expiring_soon_vehicles[['Vehicle ID', 'Vehicle Type', 'Area', 'Licence Expiry Date', 'Days Remaining']], use_container_width=True)
         
         st.markdown("---")
         
         # ============ التبويبات الرئيسية ============
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
             "📈 نظرة عامة", 
-            "🏆 أفضل المعدات", 
+            "🚗 المركبات", 
             "📍 تحليل المناطق", 
-            "🔧 أنواع الصيانات",
+            "⏰ الرخص والتواريخ",
             "📊 الرسوم البيانية", 
             "📋 البيانات التفصيلية"
         ])
         
         # ============ التبويب الأول - نظرة عامة ============
         with tab1:
-            st.subheader("📈 نظرة عامة على البيانات")
+            st.subheader("📈 نظرة عامة على بيانات المركبات")
             
-            col1, col2 = st.columns([2, 1])
-            
-            with col1:
-                st.write("**جدول البيانات الكاملة:**")
-                st.dataframe(df, use_container_width=True, height=400)
-            
-            with col2:
-                st.write("**إحصائيات المبالغ:**")
-                stats = df[amount_col].describe()
-                st.metric("المتوسط", f"{stats['mean']:,.2f}")
-                st.metric("الحد الأقصى", f"{stats['max']:,.2f}")
-                st.metric("الحد الأدنى", f"{stats['min']:,.2f}")
-                st.metric("الانحراف المعياري", f"{stats['std']:,.2f}")
+            st.write("**جدول البيانات الكاملة:**")
+            st.dataframe(df, use_container_width=True, height=400)
             
             # تحميل كـ CSV
             csv = df.to_csv(index=False, encoding='utf-8-sig')
             st.download_button(
                 label="📥 تحميل البيانات (CSV)",
                 data=csv,
-                file_name=f"maintenance_{datetime.now().strftime('%Y%m%d')}.csv",
+                file_name=f"vehicles_{datetime.now().strftime('%Y%m%d')}.csv",
                 mime="text/csv"
             )
         
-        # ============ التبويب الثاني - أفضل المعدات ============
+        # ============ التبويب الثاني - المركبات ============
         with tab2:
-            st.subheader("🏆 أفضل 10 معدات (حسب صافي المبلغ)")
-            
-            # ترتيب المعدات حسب صافي المبلغ وليس العدد
-            vehicle_spending = df.groupby('Vehicle Plate Number')[amount_col].agg(['sum', 'count', 'mean']).sort_values('sum', ascending=False).head(10)
+            st.subheader("🚗 إدارة المركبات")
             
             col1, col2 = st.columns([1, 1])
             
             with col1:
-                st.write("**ترتيب المعدات حسب الإنفاق:**")
-                vehicle_df = pd.DataFrame({
-                    'رقم المعدة': vehicle_spending.index,
-                    'إجمالي الصافي': vehicle_spending['sum'].values,
-                    'عدد الصيانات': vehicle_spending['count'].values.astype(int),
-                    'المتوسط': vehicle_spending['mean'].values
-                }).reset_index(drop=True)
-                vehicle_df.index = vehicle_df.index + 1
-                st.dataframe(vehicle_df, use_container_width=True)
+                st.write("**إحصائيات الحالة:**")
+                if 'STATUES-状态' in df.columns:
+                    status_count = df['STATUES-状态'].value_counts()
+                    st.bar_chart(status_count)
             
             with col2:
-                # رسم بياني
-                fig = px.bar(
-                    x=vehicle_spending['sum'].values,
-                    y=vehicle_spending.index,
-                    orientation='h',
-                    title="أفضل 10 معدات (صافي المبلغ)",
-                    labels={'x': 'صافي المبلغ', 'y': 'رقم المعدة'},
-                    color=vehicle_spending['sum'].values,
-                    color_continuous_scale='Blues'
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                st.write("**توزيع أنواع المركبات:**")
+                if 'Vehicle Type' in df.columns:
+                    vehicle_type_count = df['Vehicle Type'].value_counts()
+                    fig = px.pie(
+                        values=vehicle_type_count.values,
+                        names=vehicle_type_count.index,
+                        title="توزيع أنواع المركبات"
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
             
-            # أنواع المعدات
-            if 'Vehicle Type' in df.columns:
-                st.subheader("🚗 توزيع أنواع المعدات")
-                
-                vehicle_type_spending = df.groupby('Vehicle Type')[amount_col].agg(['sum', 'count']).sort_values('sum', ascending=False)
-                
+            st.subheader("📋 قائمة المركبات")
+            
+            # تصفية حسب الحالة
+            if 'STATUES-状态' in df.columns:
+                status_filter = st.multiselect(
+                    "تصفية حسب الحالة:",
+                    df['STATUES-状态'].unique(),
+                    default=df['STATUES-状态'].unique()
+                )
+                filtered_df = df[df['STATUES-状态'].isin(status_filter)]
+            else:
+                filtered_df = df
+            
+            st.dataframe(filtered_df, use_container_width=True)
+        
+        # ============ التبويب الثالث - تحليل المناطق ============
+        with tab3:
+            st.subheader("📍 تحليل المناطق")
+            
+            if 'Area' in df.columns:
                 col1, col2 = st.columns([1, 1])
                 
                 with col1:
+                    st.write("**عدد المركبات حسب المنطقة:**")
+                    area_count = df['Area'].value_counts()
+                    st.bar_chart(area_count)
+                
+                with col2:
+                    st.write("**توزيع المناطق:**")
                     fig = px.pie(
-                        values=vehicle_type_spending['sum'].values,
-                        names=vehicle_type_spending.index,
-                        title="توزيع الإنفاق حسب نوع المعدة"
+                        values=area_count.values,
+                        names=area_count.index,
+                        title="توزيع المركبات حسب المنطقة"
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # جدول تفصيلي للمناطق
+                st.subheader("📊 جدول المناطق")
+                
+                area_analysis = df.groupby('Area').agg({
+                    'Vehicle ID': 'count',
+                    'Vehicle Type': lambda x: x.nunique()
+                }).rename(columns={'Vehicle ID': 'عدد المركبات', 'Vehicle Type': 'أنواع المركبات'})
+                
+                st.dataframe(area_analysis, use_container_width=True)
+        
+        # ============ التبويب الرابع - الرخص والتواريخ ============
+        with tab4:
+            st.subheader("⏰ إدارة تواريخ انتهاء الرخص")
+            
+            if 'Licence Expiry Date' in df.columns and 'Days Remaining' in df.columns:
+                col1, col2 = st.columns([1, 1])
+                
+                with col1:
+                    st.write("**حالة الرخص:**")
+                    
+                    # تقسيم الرخص
+                    expired = len(df[df['Days Remaining'] <= 0])
+                    expiring_soon = len(df[(df['Days Remaining'] > 0) & (df['Days Remaining'] <= 30)])
+                    valid = len(df[df['Days Remaining'] > 30])
+                    
+                    status_data = {
+                        'الحالة': ['منتهية', 'انتهاء قريب', 'صحيحة'],
+                        'العدد': [expired, expiring_soon, valid]
+                    }
+                    
+                    fig = px.bar(
+                        status_data,
+                        x='الحالة',
+                        y='العدد',
+                        title="حالة الرخص",
+                        color='الحالة',
+                        color_discrete_map={
+                            'منتهية': 'red',
+                            'انتهاء قريب': 'orange',
+                            'صحيحة': 'green'
+                        }
                     )
                     st.plotly_chart(fig, use_container_width=True)
                 
                 with col2:
-                    st.write("**إحصائيات أنواع المعدات:**")
-                    type_df = pd.DataFrame({
-                        'النوع': vehicle_type_spending.index,
-                        'الإنفاق الإجمالي': vehicle_type_spending['sum'].values,
-                        'عدد الصيانات': vehicle_type_spending['count'].values.astype(int)
-                    })
-                    st.dataframe(type_df, use_container_width=True)
-        
-        # ============ التبويب الثالث - تحليل المناطق ============
-        with tab3:
-            st.subheader("📍 تحليل المناطق (حسب صافي المبلغ)")
-            
-            # تحليل المناطق
-            area_analysis = df.groupby('Area')[amount_col].agg(['sum', 'count', 'mean']).sort_values('sum', ascending=False)
-            
-            col1, col2 = st.columns([1, 1])
-            
-            with col1:
-                st.write("**جدول المناطق:**")
-                area_df = pd.DataFrame({
-                    'المنطقة': area_analysis.index,
-                    'إجمالي الصافي': area_analysis['sum'].values,
-                    'عدد الصيانات': area_analysis['count'].values.astype(int),
-                    'المتوسط': area_analysis['mean'].values
-                }).reset_index(drop=True)
-                area_df.index = area_df.index + 1
-                st.dataframe(area_df, use_container_width=True)
-            
-            with col2:
-                fig = px.bar(
-                    x=area_analysis.index,
-                    y=area_analysis['sum'].values,
-                    title="إجمالي الصافي حسب المنطقة",
-                    labels={'x': 'المنطقة', 'y': 'الصافي'},
-                    color=area_analysis['sum'].values,
-                    color_continuous_scale='Viridis'
-                )
-                fig.update_xaxes(tickangle=-45)
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # خريطة دائرية للمناطق
-            st.subheader("📊 نسبة الإنفاق حسب المنطقة")
-            fig = px.pie(
-                values=area_analysis['sum'].values,
-                names=area_analysis.index,
-                title="توزيع الإنفاق حسب المنطقة (%)"
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        
-        # ============ التبويب الرابع - أنواع الصيانات ============
-        with tab4:
-            st.subheader("🔧 تحليل أنواع الصيانات (Notes ar)")
-            
-            # تحليل الصيانات حسب Notes ar
-            maintenance_analysis = df.groupby('Notes ar')[amount_col].agg(['sum', 'count', 'mean']).sort_values('sum', ascending=False)
-            
-            col1, col2 = st.columns([1, 1])
-            
-            with col1:
-                st.write("**جدول أنواع الصيانات:**")
-                maint_df = pd.DataFrame({
-                    'نوع الصيانة': maintenance_analysis.index,
-                    'إجمالي الصافي': maintenance_analysis['sum'].values,
-                    'عدد العمليات': maintenance_analysis['count'].values.astype(int),
-                    'المتوسط': maintenance_analysis['mean'].values
-                }).reset_index(drop=True)
-                maint_df.index = maint_df.index + 1
-                st.dataframe(maint_df, use_container_width=True)
-            
-            with col2:
-                fig = px.bar(
-                    x=maintenance_analysis['sum'].values,
-                    y=maintenance_analysis.index,
-                    orientation='h',
-                    title="إجمالي الصافي حسب نوع الصيانة",
-                    labels={'x': 'الصافي', 'y': 'نوع الصيانة'},
-                    color=maintenance_analysis['sum'].values,
-                    color_continuous_scale='Reds'
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # رسم بياني دائري
-            st.subheader("📌 نسبة الصيانات")
-            fig = px.pie(
-                values=maintenance_analysis['sum'].values,
-                names=maintenance_analysis.index,
-                title="توزيع الإنفاق حسب نوع الصيانة (%)"
-            )
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # تحليل متقدم: المنطقة + نوع الصيانة
-            st.subheader("🔍 تحليل متقدم: المنطقة × نوع الصيانة")
-            
-            area_maintenance = df.groupby(['Area', 'Notes ar'])[amount_col].sum().reset_index()
-            
-            fig = px.bar(
-                area_maintenance,
-                x='Area',
-                y=amount_col,
-                color='Notes ar',
-                title="الإنفاق حسب المنطقة ونوع الصيانة",
-                labels={amount_col: 'الصافي'},
-                barmode='group'
-            )
-            st.plotly_chart(fig, use_container_width=True)
+                    st.write("**توزيع أيام الانتهاء:**")
+                    fig = px.histogram(
+                        df,
+                        x='Days Remaining',
+                        title="توزيع أيام الانتهاء",
+                        labels={'Days Remaining': 'الأيام المتبقية'},
+                        nbins=20
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # جدول الرخص القريبة من الانتهاء
+                st.subheader("⏳ المركبات القريبة من انتهاء الرخصة (30 يوم)")
+                
+                expiring_vehicles = df[(df['Days Remaining'] > 0) & (df['Days Remaining'] <= 30)].sort_values('Days Remaining')
+                
+                if len(expiring_vehicles) > 0:
+                    display_cols = ['Vehicle ID', 'Vehicle Type', 'Area', 'Licence Expiry Date', 'Days Remaining']
+                    st.dataframe(expiring_vehicles[display_cols], use_container_width=True)
+                else:
+                    st.info("✅ لا توجد رخص قريبة من الانتهاء")
         
         # ============ التبويب الخامس - الرسوم البيانية ============
         with tab5:
-            st.subheader("📊 لوحة الرسوم البيانية المتقدمة")
+            st.subheader("📊 لوحة الرسوم البيانية")
             
             col1, col2 = st.columns([1, 1])
             
             with col1:
-                # مقدمو الخدمات
-                if 'Service Provider' in df.columns:
-                    top_providers = df.groupby('Service Provider')[amount_col].sum().sort_values(ascending=False).head(10)
-                    fig = px.barh(
-                        x=top_providers.values,
-                        y=top_providers.index,
-                        title="أفضل 10 مقدمي خدمات",
-                        labels={'x': 'الصافي', 'y': 'مقدم الخدمة'},
-                        color=top_providers.values,
-                        color_continuous_scale='Greens'
+                if 'Vehicle Type' in df.columns and 'Area' in df.columns:
+                    st.write("**المركبات: النوع × المنطقة**")
+                    vehicle_area = df.groupby(['Area', 'Vehicle Type']).size().reset_index(name='العدد')
+                    fig = px.bar(
+                        vehicle_area,
+                        x='Area',
+                        y='العدد',
+                        color='Vehicle Type',
+                        title="توزيع المركبات حسب النوع والمنطقة"
                     )
                     st.plotly_chart(fig, use_container_width=True)
             
             with col2:
-                # المصروفات الشهرية
-                if 'Month' in df.columns:
-                    monthly_expenses = df.groupby('Month')[amount_col].sum()
-                    fig = px.line(
-                        x=monthly_expenses.index,
-                        y=monthly_expenses.values,
-                        title="المصروفات الشهرية",
-                        markers=True,
-                        labels={'x': 'الشهر', 'y': 'الصافي'}
+                if 'Transport Capacity' in df.columns:
+                    st.write("**توزيع السعة النقلية:**")
+                    capacity_by_area = df.groupby('Area')['Transport Capacity'].sum().sort_values(ascending=False)
+                    fig = px.bar(
+                        x=capacity_by_area.values,
+                        y=capacity_by_area.index,
+                        orientation='h',
+                        title="إجمالي السعة النقلية حسب المنطقة"
                     )
                     st.plotly_chart(fig, use_container_width=True)
             
             col3, col4 = st.columns([1, 1])
             
             with col3:
-                # المناطق × نوع المعدة
-                if 'Vehicle Type' in df.columns:
-                    vehicle_area = df.groupby(['Area', 'Vehicle Type'])[amount_col].sum().reset_index()
-                    fig = px.bar(
-                        vehicle_area,
-                        x='Area',
-                        y=amount_col,
-                        color='Vehicle Type',
-                        title="الإنفاق: المنطقة × نوع المعدة",
-                        labels={amount_col: 'الصافي'}
+                if 'Branch' in df.columns:
+                    st.write("**المركبات حسب الفرع:**")
+                    branch_count = df['Branch'].value_counts()
+                    fig = px.pie(
+                        values=branch_count.values,
+                        names=branch_count.index,
+                        title="توزيع المركبات حسب الفرع"
                     )
                     st.plotly_chart(fig, use_container_width=True)
             
             with col4:
-                # فئة المصروفات
-                if 'Expense Category' in df.columns:
-                    category_expenses = df.groupby('Expense Category')[amount_col].sum().sort_values(ascending=False)
+                if 'Licence Status' in df.columns:
+                    st.write("**حالة الرخصة:**")
+                    license_status = df['Licence Status'].value_counts()
                     fig = px.pie(
-                        values=category_expenses.values,
-                        names=category_expenses.index,
-                        title="توزيع فئات المصروفات"
+                        values=license_status.values,
+                        names=license_status.index,
+                        title="توزيع حالات الرخصة"
                     )
                     st.plotly_chart(fig, use_container_width=True)
         
         # ============ التبويب السادس - البيانات التفصيلية ============
         with tab6:
-            st.subheader("📋 البيانات والتفاصيل")
+            st.subheader("📋 البيانات التفصيلية")
             
             col1, col2 = st.columns([1, 1])
             
             with col1:
-                st.write("**تفاصيل المعدة:**")
-                vehicles = sorted(df['Vehicle Plate Number'].unique())
-                selected_vehicle = st.selectbox("اختر مركبة/معدة:", vehicles)
+                st.write("**تفاصيل المركبة:**")
                 
-                vehicle_data = df[df['Vehicle Plate Number'] == selected_vehicle]
-                
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    st.metric("عدد الصيانات", len(vehicle_data))
-                with col_b:
-                    st.metric("إجمالي الصافي", f"{vehicle_data[amount_col].sum():,.2f}")
-                
-                st.dataframe(vehicle_data, use_container_width=True)
+                if 'Vehicle ID' in df.columns:
+                    vehicles = sorted(df['Vehicle ID'].unique())
+                    selected_vehicle = st.selectbox("اختر رقم المركبة:", vehicles)
+                    
+                    vehicle_data = df[df['Vehicle ID'] == selected_vehicle]
+                    
+                    st.dataframe(vehicle_data, use_container_width=True)
             
             with col2:
-                st.write("**تفاصيل المنطقة:**")
-                areas = sorted(df['Area'].unique())
-                selected_area = st.selectbox("اختر منطقة:", areas)
+                st.write("**إحصائيات المنطقة:**")
                 
-                area_data = df[df['Area'] == selected_area]
-                
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    st.metric("عدد الصيانات", len(area_data))
-                with col_b:
-                    st.metric("إجمالي الصافي", f"{area_data[amount_col].sum():,.2f}")
-                
-                st.dataframe(area_data, use_container_width=True)
-            
-            # تفاصيل نوع الصيانة
-            st.write("**تفاصيل نوع الصيانة:**")
-            maintenance_types = sorted(df['Notes ar'].unique())
-            selected_maintenance = st.selectbox("اختر نوع صيانة:", maintenance_types)
-            
-            maintenance_data = df[df['Notes ar'] == selected_maintenance]
-            
-            col_a, col_b, col_c = st.columns(3)
-            with col_a:
-                st.metric("عدد الصيانات", len(maintenance_data))
-            with col_b:
-                st.metric("إجمالي الصافي", f"{maintenance_data[amount_col].sum():,.2f}")
-            with col_c:
-                st.metric("المتوسط", f"{maintenance_data[amount_col].mean():,.2f}")
-            
-            st.dataframe(maintenance_data, use_container_width=True)
+                if 'Area' in df.columns:
+                    areas = sorted(df['Area'].unique())
+                    selected_area = st.selectbox("اختر المنطقة:", areas)
+                    
+                    area_data = df[df['Area'] == selected_area]
+                    
+                    col_a, col_b, col_c = st.columns(3)
+                    with col_a:
+                        st.metric("عدد المركبات", len(area_data))
+                    with col_b:
+                        if 'Transport Capacity' in df.columns:
+                            st.metric("السعة الإجمالية", f"{area_data['Transport Capacity'].sum():,.0f}")
+                    with col_c:
+                        if 'Days Remaining' in df.columns:
+                            expired_in_area = len(area_data[area_data['Days Remaining'] <= 0])
+                            st.metric("رخص منتهية", expired_in_area)
+                    
+                    st.dataframe(area_data, use_container_width=True)
         
         st.markdown("---")
-        st.info("✨ لوحة التحكم جاهزة - استخدم التبويبات للتنقل بين التحليلات المختلفة")
+        st.info("✨ لوحة إدارة المركبات جاهزة - استخدم التبويبات للتنقل بين التحليلات المختلفة")
         
     except Exception as e:
         st.error(f"❌ حدث خطأ: {e}")
         st.write(f"**تفاصيل الخطأ:** {str(e)}")
+        import traceback
+        st.write(traceback.format_exc())
 else:
-    st.info("👆 يرجى رفع ملف بيانات الصيانة (Excel)")
+    st.info("👆 يرجى رفع ملف بيانات المركبات (Excel)")
     
     st.write("---")
     st.subheader("📋 الأعمدة المطلوبة:")
     
     required_columns = {
-        "Year": "السنة",
-        "Month": "الشهر",
-        "Day": "اليوم",
-        "Area": "المنطقة (مهم جداً)",
-        "Expense-Bearing Branch": "الفرع المسؤول عن المصروف",
-        "Vehicle Plate Number": "رقم المعدة (مهم جداً)",
-        "Vehicle Type": "نوع المعدة",
-        "Expense Category": "فئة المصروف",
-        "Notes ar": "نوع الصيانة (مهم جداً)",
-        "Service Provider": "مقدم الخدمة",
-        "Amount": "المبلغ",
-        "Net Amount": "الصافي",
-        "VAT 14%": "الضريبة 14%",
-        "WHT 1% & 3%": "الضريبة المستقطعة"
+        "Vehicle ID": "رقم المركبة (车牌号)",
+        "Vehicle Type": "نوع/ماركة المركبة (品牌)",
+        "Area": "المنطقة (区域)",
+        "Transport Capacity": "السعة النقلية (区域运力)",
+        "Branch": "الفرع (网点)",
+        "STATUES-状态": "الحالة (状态)",
+        "Licence Expiry Date": "تاريخ انتهاء الرخصة (有效期止)",
+        "Days Remaining": "الأيام المتبقية (有效期剩余天数)",
+        "Licence Status": "حالة الرخصة (行驶证状态)"
     }
     
     for col, desc in required_columns.items():
