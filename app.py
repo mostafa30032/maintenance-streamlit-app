@@ -49,19 +49,61 @@ if uploaded_file is not None:
         # قراءة الملف
         df = pd.read_excel(uploaded_file)
         
-        # تنظيف أسماء الأعمدة
+        # تنظيف أسماء الأعمدة - إزالة المسافات
         df.columns = df.columns.str.strip()
         
         st.success("✅ تم تحميل البيانات بنجاح!")
         
-        # تحويل تاريخ انتهاء الرخصة لـ datetime
-        if 'Licence Expiry Date' in df.columns:
-            df['Licence Expiry Date'] = pd.to_datetime(df['Licence Expiry Date'], errors='coerce')
+        # طباعة أسماء الأعمدة للتشخيص
+        st.write("**أسماء الأعمدة المكتشفة:**")
+        st.write(df.columns.tolist())
         
-        # حساب الأيام المتبقية
-        today = datetime.now()
-        if 'Licence Expiry Date' in df.columns:
-            df['Days Remaining'] = (df['Licence Expiry Date'] - pd.Timestamp(today)).dt.days
+        # البحث عن الأعمدة الصحيحة بناءً على الاسم الذي يحتويه
+        vehicle_id_col = None
+        vehicle_type_col = None
+        area_col = None
+        capacity_col = None
+        branch_col = None
+        status_col = None
+        license_expiry_col = None
+        days_remaining_col = None
+        license_status_col = None
+        
+        # البحث عن الأعمدة
+        for col in df.columns:
+            if 'vehicle' in col.lower() and 'id' in col.lower():
+                vehicle_id_col = col
+            elif 'vehicle' in col.lower() and 'type' in col.lower():
+                vehicle_type_col = col
+            elif 'area' in col.lower() or '区域' in col:
+                area_col = col
+            elif 'transport' in col.lower() or '区域运力' in col:
+                capacity_col = col
+            elif 'branch' in col.lower() or '网点' in col:
+                branch_col = col
+            elif 'statues' in col.lower() or '状态' in col:
+                status_col = col
+            elif 'licence expiry' in col.lower() or 'expiry' in col.lower():
+                license_expiry_col = col
+            elif 'difference' in col.lower() or '剩余' in col.lower():
+                days_remaining_col = col
+            elif 'licence status' in col.lower() or '行驶证状态' in col:
+                license_status_col = col
+        
+        st.write(f"**الأعمدة المكتشفة:**")
+        st.write(f"- Vehicle ID: {vehicle_id_col}")
+        st.write(f"- Vehicle Type: {vehicle_type_col}")
+        st.write(f"- Area: {area_col}")
+        st.write(f"- Status: {status_col}")
+        st.write(f"- License Expiry: {license_expiry_col}")
+        
+        # تحويل تاريخ انتهاء الرخصة لـ datetime
+        if license_expiry_col:
+            df[license_expiry_col] = pd.to_datetime(df[license_expiry_col], errors='coerce')
+            
+            # حساب الأيام المتبقية
+            today = datetime.now()
+            df['Days_Remaining'] = (df[license_expiry_col] - pd.Timestamp(today)).dt.days
         
         # ============ KPI الرئيسية ============
         st.subheader("📊 المؤشرات الرئيسية")
@@ -72,34 +114,44 @@ if uploaded_file is not None:
             st.metric("🚗 إجمالي المركبات", len(df))
         
         with col2:
-            active_vehicles = len(df[df['STATUES-状态'] == 'Active']) if 'STATUES-状态' in df.columns else 0
+            active_vehicles = 0
+            if status_col:
+                active_vehicles = len(df[df[status_col].str.contains('Active|in', na=False, case=False)])
             st.metric("✅ المركبات النشطة", active_vehicles)
         
         with col3:
-            expired = len(df[df['Days Remaining'] <= 0]) if 'Days Remaining' in df.columns else 0
+            expired = 0
+            if 'Days_Remaining' in df.columns:
+                expired = len(df[df['Days_Remaining'] <= 0])
             st.metric("⚠️ رخص منتهية", expired)
         
         with col4:
-            expiring_soon = len(df[(df['Days Remaining'] > 0) & (df['Days Remaining'] <= 30)]) if 'Days Remaining' in df.columns else 0
+            expiring_soon = 0
+            if 'Days_Remaining' in df.columns:
+                expiring_soon = len(df[(df['Days_Remaining'] > 0) & (df['Days_Remaining'] <= 30)])
             st.metric("⏰ انتهاء قريب", expiring_soon)
         
         with col5:
-            areas_count = df['Area'].nunique() if 'Area' in df.columns else 0
+            areas_count = 0
+            if area_col:
+                areas_count = df[area_col].nunique()
             st.metric("📍 المناطق", areas_count)
         
         st.markdown("---")
         
         # ============ التنبيهات ============
-        if 'Days Remaining' in df.columns:
-            expired_vehicles = df[df['Days Remaining'] <= 0]
+        if 'Days_Remaining' in df.columns:
+            expired_vehicles = df[df['Days_Remaining'] <= 0]
             if len(expired_vehicles) > 0:
                 st.markdown("<div class='warning-box'>⚠️ تحذير: يوجد رخص منتهية!</div>", unsafe_allow_html=True)
-                st.dataframe(expired_vehicles[['Vehicle ID', 'Vehicle Type', 'Area', 'Licence Expiry Date']], use_container_width=True)
+                display_cols = [c for c in [vehicle_id_col, vehicle_type_col, area_col, license_expiry_col] if c]
+                st.dataframe(expired_vehicles[display_cols], use_container_width=True)
             
-            expiring_soon_vehicles = df[(df['Days Remaining'] > 0) & (df['Days Remaining'] <= 30)]
+            expiring_soon_vehicles = df[(df['Days_Remaining'] > 0) & (df['Days_Remaining'] <= 30)]
             if len(expiring_soon_vehicles) > 0:
                 st.markdown("<div class='info-box'>⏰ معلومة: رخص تنتهي خلال 30 يوم</div>", unsafe_allow_html=True)
-                st.dataframe(expiring_soon_vehicles[['Vehicle ID', 'Vehicle Type', 'Area', 'Licence Expiry Date', 'Days Remaining']], use_container_width=True)
+                display_cols = [c for c in [vehicle_id_col, vehicle_type_col, area_col, license_expiry_col, 'Days_Remaining'] if c]
+                st.dataframe(expiring_soon_vehicles[display_cols], use_container_width=True)
         
         st.markdown("---")
         
@@ -136,15 +188,15 @@ if uploaded_file is not None:
             col1, col2 = st.columns([1, 1])
             
             with col1:
-                st.write("**إحصائيات الحالة:**")
-                if 'STATUES-状态' in df.columns:
-                    status_count = df['STATUES-状态'].value_counts()
+                if status_col:
+                    st.write("**إحصائيات الحالة:**")
+                    status_count = df[status_col].value_counts()
                     st.bar_chart(status_count)
             
             with col2:
-                st.write("**توزيع أنواع المركبات:**")
-                if 'Vehicle Type' in df.columns:
-                    vehicle_type_count = df['Vehicle Type'].value_counts()
+                if vehicle_type_col:
+                    st.write("**توزيع أنواع المركبات:**")
+                    vehicle_type_count = df[vehicle_type_col].value_counts()
                     fig = px.pie(
                         values=vehicle_type_count.values,
                         names=vehicle_type_count.index,
@@ -155,13 +207,13 @@ if uploaded_file is not None:
             st.subheader("📋 قائمة المركبات")
             
             # تصفية حسب الحالة
-            if 'STATUES-状态' in df.columns:
+            if status_col:
                 status_filter = st.multiselect(
                     "تصفية حسب الحالة:",
-                    df['STATUES-状态'].unique(),
-                    default=df['STATUES-状态'].unique()
+                    df[status_col].unique(),
+                    default=df[status_col].unique()
                 )
-                filtered_df = df[df['STATUES-状态'].isin(status_filter)]
+                filtered_df = df[df[status_col].isin(status_filter)]
             else:
                 filtered_df = df
             
@@ -171,12 +223,12 @@ if uploaded_file is not None:
         with tab3:
             st.subheader("📍 تحليل المناطق")
             
-            if 'Area' in df.columns:
+            if area_col:
                 col1, col2 = st.columns([1, 1])
                 
                 with col1:
                     st.write("**عدد المركبات حسب المنطقة:**")
-                    area_count = df['Area'].value_counts()
+                    area_count = df[area_col].value_counts()
                     st.bar_chart(area_count)
                 
                 with col2:
@@ -191,10 +243,9 @@ if uploaded_file is not None:
                 # جدول تفصيلي للمناطق
                 st.subheader("📊 جدول المناطق")
                 
-                area_analysis = df.groupby('Area').agg({
-                    'Vehicle ID': 'count',
-                    'Vehicle Type': lambda x: x.nunique()
-                }).rename(columns={'Vehicle ID': 'عدد المركبات', 'Vehicle Type': 'أنواع المركبات'})
+                area_analysis = df.groupby(area_col).agg({
+                    vehicle_id_col or 'vehicle_id': 'count',
+                }).rename(columns={vehicle_id_col or 'vehicle_id': 'عدد المركبات'})
                 
                 st.dataframe(area_analysis, use_container_width=True)
         
@@ -202,16 +253,16 @@ if uploaded_file is not None:
         with tab4:
             st.subheader("⏰ إدارة تواريخ انتهاء الرخص")
             
-            if 'Licence Expiry Date' in df.columns and 'Days Remaining' in df.columns:
+            if 'Days_Remaining' in df.columns:
                 col1, col2 = st.columns([1, 1])
                 
                 with col1:
                     st.write("**حالة الرخص:**")
                     
                     # تقسيم الرخص
-                    expired = len(df[df['Days Remaining'] <= 0])
-                    expiring_soon = len(df[(df['Days Remaining'] > 0) & (df['Days Remaining'] <= 30)])
-                    valid = len(df[df['Days Remaining'] > 30])
+                    expired = len(df[df['Days_Remaining'] <= 0])
+                    expiring_soon = len(df[(df['Days_Remaining'] > 0) & (df['Days_Remaining'] <= 30)])
+                    valid = len(df[df['Days_Remaining'] > 30])
                     
                     status_data = {
                         'الحالة': ['منتهية', 'انتهاء قريب', 'صحيحة'],
@@ -236,9 +287,9 @@ if uploaded_file is not None:
                     st.write("**توزيع أيام الانتهاء:**")
                     fig = px.histogram(
                         df,
-                        x='Days Remaining',
+                        x='Days_Remaining',
                         title="توزيع أيام الانتهاء",
-                        labels={'Days Remaining': 'الأيام المتبقية'},
+                        labels={'Days_Remaining': 'الأيام المتبقية'},
                         nbins=20
                     )
                     st.plotly_chart(fig, use_container_width=True)
@@ -246,10 +297,10 @@ if uploaded_file is not None:
                 # جدول الرخص القريبة من الانتهاء
                 st.subheader("⏳ المركبات القريبة من انتهاء الرخصة (30 يوم)")
                 
-                expiring_vehicles = df[(df['Days Remaining'] > 0) & (df['Days Remaining'] <= 30)].sort_values('Days Remaining')
+                expiring_vehicles = df[(df['Days_Remaining'] > 0) & (df['Days_Remaining'] <= 30)].sort_values('Days_Remaining')
                 
                 if len(expiring_vehicles) > 0:
-                    display_cols = ['Vehicle ID', 'Vehicle Type', 'Area', 'Licence Expiry Date', 'Days Remaining']
+                    display_cols = [c for c in [vehicle_id_col, vehicle_type_col, area_col, license_expiry_col, 'Days_Remaining'] if c]
                     st.dataframe(expiring_vehicles[display_cols], use_container_width=True)
                 else:
                     st.info("✅ لا توجد رخص قريبة من الانتهاء")
@@ -261,36 +312,39 @@ if uploaded_file is not None:
             col1, col2 = st.columns([1, 1])
             
             with col1:
-                if 'Vehicle Type' in df.columns and 'Area' in df.columns:
+                if vehicle_type_col and area_col:
                     st.write("**المركبات: النوع × المنطقة**")
-                    vehicle_area = df.groupby(['Area', 'Vehicle Type']).size().reset_index(name='العدد')
+                    vehicle_area = df.groupby([area_col, vehicle_type_col]).size().reset_index(name='العدد')
                     fig = px.bar(
                         vehicle_area,
-                        x='Area',
+                        x=area_col,
                         y='العدد',
-                        color='Vehicle Type',
+                        color=vehicle_type_col,
                         title="توزيع المركبات حسب النوع والمنطقة"
                     )
                     st.plotly_chart(fig, use_container_width=True)
             
             with col2:
-                if 'Transport Capacity' in df.columns:
+                if capacity_col:
                     st.write("**توزيع السعة النقلية:**")
-                    capacity_by_area = df.groupby('Area')['Transport Capacity'].sum().sort_values(ascending=False)
-                    fig = px.bar(
-                        x=capacity_by_area.values,
-                        y=capacity_by_area.index,
-                        orientation='h',
-                        title="إجمالي السعة النقلية حسب المنطقة"
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+                    try:
+                        capacity_by_area = df.groupby(area_col)[capacity_col].sum().sort_values(ascending=False)
+                        fig = px.bar(
+                            x=capacity_by_area.values,
+                            y=capacity_by_area.index,
+                            orientation='h',
+                            title="إجمالي السعة النقلية حسب المنطقة"
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    except:
+                        st.write("⚠️ لا يمكن تحليل السعة")
             
             col3, col4 = st.columns([1, 1])
             
             with col3:
-                if 'Branch' in df.columns:
+                if branch_col:
                     st.write("**المركبات حسب الفرع:**")
-                    branch_count = df['Branch'].value_counts()
+                    branch_count = df[branch_col].value_counts()
                     fig = px.pie(
                         values=branch_count.values,
                         names=branch_count.index,
@@ -299,9 +353,9 @@ if uploaded_file is not None:
                     st.plotly_chart(fig, use_container_width=True)
             
             with col4:
-                if 'Licence Status' in df.columns:
+                if license_status_col:
                     st.write("**حالة الرخصة:**")
-                    license_status = df['Licence Status'].value_counts()
+                    license_status = df[license_status_col].value_counts()
                     fig = px.pie(
                         values=license_status.values,
                         names=license_status.index,
@@ -316,34 +370,37 @@ if uploaded_file is not None:
             col1, col2 = st.columns([1, 1])
             
             with col1:
-                st.write("**تفاصيل المركبة:**")
-                
-                if 'Vehicle ID' in df.columns:
-                    vehicles = sorted(df['Vehicle ID'].unique())
+                if vehicle_id_col:
+                    st.write("**تفاصيل المركبة:**")
+                    
+                    vehicles = sorted(df[vehicle_id_col].unique())
                     selected_vehicle = st.selectbox("اختر رقم المركبة:", vehicles)
                     
-                    vehicle_data = df[df['Vehicle ID'] == selected_vehicle]
+                    vehicle_data = df[df[vehicle_id_col] == selected_vehicle]
                     
                     st.dataframe(vehicle_data, use_container_width=True)
             
             with col2:
-                st.write("**إحصائيات المنطقة:**")
-                
-                if 'Area' in df.columns:
-                    areas = sorted(df['Area'].unique())
+                if area_col:
+                    st.write("**إحصائيات المنطقة:**")
+                    
+                    areas = sorted(df[area_col].unique())
                     selected_area = st.selectbox("اختر المنطقة:", areas)
                     
-                    area_data = df[df['Area'] == selected_area]
+                    area_data = df[df[area_col] == selected_area]
                     
                     col_a, col_b, col_c = st.columns(3)
                     with col_a:
                         st.metric("عدد المركبات", len(area_data))
                     with col_b:
-                        if 'Transport Capacity' in df.columns:
-                            st.metric("السعة الإجمالية", f"{area_data['Transport Capacity'].sum():,.0f}")
+                        if capacity_col:
+                            try:
+                                st.metric("السعة الإجمالية", f"{area_data[capacity_col].sum():,.0f}")
+                            except:
+                                st.metric("السعة الإجمالية", "N/A")
                     with col_c:
-                        if 'Days Remaining' in df.columns:
-                            expired_in_area = len(area_data[area_data['Days Remaining'] <= 0])
+                        if 'Days_Remaining' in df.columns:
+                            expired_in_area = len(area_data[area_data['Days_Remaining'] <= 0])
                             st.metric("رخص منتهية", expired_in_area)
                     
                     st.dataframe(area_data, use_container_width=True)
@@ -358,21 +415,3 @@ if uploaded_file is not None:
         st.write(traceback.format_exc())
 else:
     st.info("👆 يرجى رفع ملف بيانات المركبات (Excel)")
-    
-    st.write("---")
-    st.subheader("📋 الأعمدة المطلوبة:")
-    
-    required_columns = {
-        "Vehicle ID": "رقم المركبة (车牌号)",
-        "Vehicle Type": "نوع/ماركة المركبة (品牌)",
-        "Area": "المنطقة (区域)",
-        "Transport Capacity": "السعة النقلية (区域运力)",
-        "Branch": "الفرع (网点)",
-        "STATUES-状态": "الحالة (状态)",
-        "Licence Expiry Date": "تاريخ انتهاء الرخصة (有效期止)",
-        "Days Remaining": "الأيام المتبقية (有效期剩余天数)",
-        "Licence Status": "حالة الرخصة (行驶证状态)"
-    }
-    
-    for col, desc in required_columns.items():
-        st.write(f"- **{col}** - {desc}")
